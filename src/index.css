@@ -1,12 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* ============================================================
    src/index.css — Styles globaux Factur-X 2026
    Tailwind CSS 3.x + personnalisations mobile-first
    ============================================================ */
 
 /* ─── Directives Tailwind (OBLIGATOIRES dans cet ordre) ── */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
 
 /* ─── Variables CSS globales ─────────────────────────────── */
 :root {

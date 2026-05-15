@@ -26,6 +26,7 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
+  "proxy": "http://localhost:5000",
   "eslintConfig": {
     "extends": [
       "react-app",
@@ -50,16 +51,6 @@
       "Microsoft.AspNetCore": "Information",
       "Microsoft.EntityFrameworkCore.Database.Command": "Information",
       "FacturX": "Debug"
-    }
-  },
-  "Kestrel": {
-    "Endpoints": {
-      "Http": {
-        "Url": "http://localhost:5000"
-      },
-      "Https": {
-        "Url": "https://localhost:5001"
-      }
     }
   },
   "devDependencies": {

@@ -1,7 +1,3 @@
-// ============================================================
-// src/App.jsx — Router principal de l'application Factur-X 2026
-// Navigation mobile-first : bottom nav sur mobile, top nav sur desktop
-// ============================================================
 import React, { Suspense, lazy } from "react";
 import {
   BrowserRouter,
@@ -12,6 +8,10 @@ import {
 } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import { LayoutDashboard, FileText, ClipboardList, Zap } from "lucide-react";
+// ============================================================
+// src/App.jsx — Router principal de l'application Factur-X 2026
+// Navigation mobile-first : bottom nav sur mobile, top nav sur desktop
+// ============================================================
 
 // ─── Chargement différé des pages (code splitting) ────────
 // Réduit le bundle initial — chaque page n'est chargée

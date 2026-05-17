@@ -1,8 +1,14 @@
 // ============================================================
 // src/pages/InvoiceForm.jsx
-// Formulaire de création / édition d'une facture Factur-X 2026
-// Toutes les mentions obligatoires EN 16931 + DGFiP 2026
-// Mobile-first — 8 sections accordéon
+// Formulaire Factur-X — Création ET Modification
+//
+// CORRECTIONS :
+// 1. Payload JSON nettoyé : plus d'objets Vendeur/Acheteur
+//    dans le corps — seulement vendeurId et acheteurId (int)
+//    pour éviter l'erreur "one or more validations occurred"
+// 2. Bouton Supprimer ajouté en mode édition
+// 3. Chargement des clients corrigé (customerApi.getAll)
+// 4. Gestion d'erreur améliorée
 // ============================================================
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
@@ -22,28 +28,24 @@ import {
   Download,
   CheckCircle2,
   Loader2,
+  Trash2,
 } from "lucide-react";
 
 import { invoiceApi, customerApi } from "../api/apiClient";
 import { InvoiceLines } from "../components/InvoiceLines";
 import {
-  TVA_RATES,
   DELAIS_PAIEMENT,
   MOYENS_PAIEMENT,
   genererNumeroFacture,
   calculerEcheance,
   formatEuros,
-  formatDate,
 } from "../utils/tvaRates";
 
-// ─── Composant Section accordéon ──────────────────────────
+// ─── Section accordéon ────────────────────────────────────
 function Section({ title, icon: Icon, children, defaultOpen = true, badge }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div
-      className="bg-white rounded-xl border border-gray-200
-                    overflow-hidden shadow-sm"
-    >
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
       <button
         type="button"
         onClick={() => setOpen(!open)}
@@ -77,7 +79,7 @@ function Section({ title, icon: Icon, children, defaultOpen = true, badge }) {
   );
 }
 
-// ─── Champ de formulaire ──────────────────────────────────
+// ─── Champ formulaire ─────────────────────────────────────
 function Field({ label, required, error, hint, children }) {
   return (
     <div className="space-y-1">
@@ -97,10 +99,9 @@ function Field({ label, required, error, hint, children }) {
   );
 }
 
-// ─── Classes partagées ────────────────────────────────────
 const inputCls = `w-full px-3 py-2.5 text-sm rounded-lg border border-gray-200
-                  focus:ring-2 focus:ring-emerald-500 focus:border-transparent
-                  outline-none placeholder:text-gray-300`;
+                   focus:ring-2 focus:ring-emerald-500 focus:border-transparent
+                   outline-none placeholder:text-gray-300`;
 const selectCls = `${inputCls} bg-white`;
 
 // ═════════════════════════════════════════════════════════
@@ -113,19 +114,20 @@ export default function InvoiceForm() {
 
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [lignes, setLignes] = useState([]);
   const [errors, setErrors] = useState({});
-  const [result, setResult] = useState(null); // facture générée
+  const [result, setResult] = useState(null);
+  const [showDelete, setShowDelete] = useState(false);
 
-  // ─── Données du formulaire ────────────────────────────
   const [form, setForm] = useState({
     numeroFacture: genererNumeroFacture(
       Math.floor(Math.random() * 9000) + 1000,
     ),
     uuid: uuidv4(),
     typeDocument: "Facture",
-    vendeurId: 1,
+    vendeurId: "",
     acheteurId: "",
     dateFacture: new Date().toISOString().split("T")[0],
     dateEcheance: "",
@@ -135,6 +137,7 @@ export default function InvoiceForm() {
     referenceAcheteur: "",
     objet: "",
     notes: "",
+    conditionsPaiement: "",
     delaiPaiementJours: 30,
     moyenPaiement: "Virement",
     tauxPenalitesRetard: 15,
@@ -143,11 +146,12 @@ export default function InvoiceForm() {
     nomPdp: "Chorus Pro",
   });
 
-  const set = (field) => (e) =>
-    setForm((p) => ({ ...p, [field]: e.target?.value ?? e }));
+  const set = (f) => (e) =>
+    setForm((p) => ({ ...p, [f]: e.target?.value ?? e }));
 
   // ─── Chargement initial ───────────────────────────────
   useEffect(() => {
+    // Charger les clients depuis l'API
     customerApi
       .getAll()
       .then((r) => setCustomers(r.data || []))
@@ -161,9 +165,26 @@ export default function InvoiceForm() {
           const inv = r.data;
           setForm((p) => ({
             ...p,
-            ...inv,
+            numeroFacture: inv.numeroFacture || p.numeroFacture,
+            uuid: inv.uuid || p.uuid,
+            typeDocument: inv.typeDocument || p.typeDocument,
+            vendeurId: inv.vendeurId || "",
+            acheteurId: inv.acheteurId || "",
             dateFacture: inv.dateFacture?.split("T")[0] || p.dateFacture,
             dateEcheance: inv.dateEcheance?.split("T")[0] || "",
+            numeroBonCommande: inv.numeroBonCommande || "",
+            numeroContrat: inv.numeroContrat || "",
+            referenceProjet: inv.referenceProjet || "",
+            referenceAcheteur: inv.referenceAcheteur || "",
+            objet: inv.objet || "",
+            notes: inv.notes || "",
+            conditionsPaiement: inv.conditionsPaiement || "",
+            delaiPaiementJours: inv.delaiPaiementJours || 30,
+            moyenPaiement: inv.moyenPaiement || "Virement",
+            tauxPenalitesRetard: inv.tauxPenalitesRetard || 15,
+            indemniteRecouvrement: inv.indemniteRecouvrement || 40,
+            identifiantPdp: inv.identifiantPdp || "PDP-001",
+            nomPdp: inv.nomPdp || "Chorus Pro",
           }));
           setLignes(inv.lignes || []);
         })
@@ -172,7 +193,7 @@ export default function InvoiceForm() {
     }
   }, [id, isEdit]);
 
-  // ─── Recalcul date d'échéance automatique ─────────────
+  // ─── Recalcul échéance automatique ───────────────────
   useEffect(() => {
     if (form.dateFacture && form.delaiPaiementJours) {
       setForm((p) => ({
@@ -185,7 +206,6 @@ export default function InvoiceForm() {
     }
   }, [form.dateFacture, form.delaiPaiementJours]);
 
-  // ─── Vendeur sélectionné ──────────────────────────────
   const vendeurSel = customers.find((c) => c.id === Number(form.vendeurId));
   const isMicro = vendeurSel?.estMicroEntreprise || false;
 
@@ -193,10 +213,11 @@ export default function InvoiceForm() {
   const valider = () => {
     const e = {};
     if (!form.numeroFacture) e.numeroFacture = "Numéro requis";
+    if (!form.vendeurId) e.vendeurId = "Émetteur requis";
     if (!form.acheteurId) e.acheteurId = "Acheteur requis";
     if (!form.dateFacture) e.dateFacture = "Date requise";
     if (lignes.length === 0) e.lignes = "Au moins une ligne requise";
-    if (lignes.some((l) => !l.description || l.prixUnitaireHT === undefined))
+    if (lignes.some((l) => !l.description || Number(l.prixUnitaireHT) < 0))
       e.lignes = "Toutes les lignes doivent avoir une description et un prix";
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -211,26 +232,49 @@ export default function InvoiceForm() {
     }
 
     setSubmitting(true);
-    const tid = toast.loading("Génération du Factur-X en cours…");
+    const tid = toast.loading(
+      isEdit ? "Mise à jour en cours…" : "Génération du Factur-X…",
+    );
+
     try {
+      // CORRECTION CLEF :
+      // On envoie UNIQUEMENT les IDs (vendeurId, acheteurId)
+      // et PAS les objets Vendeur/Acheteur complets.
+      // Cela évite l'erreur "one or more validations occurred"
+      // car ASP.NET Core essayait de valider ces objets imbriqués.
       const payload = {
-        ...form,
+        numeroFacture: form.numeroFacture,
+        uuid: form.uuid,
+        typeDocument: form.typeDocument,
         vendeurId: Number(form.vendeurId),
         acheteurId: Number(form.acheteurId),
+        dateFacture: form.dateFacture,
+        dateEcheance: form.dateEcheance || null,
+        numeroBonCommande: form.numeroBonCommande || null,
+        numeroContrat: form.numeroContrat || null,
+        referenceProjet: form.referenceProjet || null,
+        referenceAcheteur: form.referenceAcheteur || null,
+        objet: form.objet || null,
+        notes: form.notes || null,
+        conditionsPaiement: form.conditionsPaiement || null,
         delaiPaiementJours: Number(form.delaiPaiementJours),
+        moyenPaiement: form.moyenPaiement,
         tauxPenalitesRetard: Number(form.tauxPenalitesRetard),
         indemniteRecouvrement: Number(form.indemniteRecouvrement),
+        identifiantPdp: form.identifiantPdp || null,
+        nomPdp: form.nomPdp || null,
         mentionMicroEntreprise: isMicro,
+        // Lignes : uniquement les champs nécessaires
         lignes: lignes.map((l, i) => ({
           numeroLigne: i + 1,
           description: l.description,
           referenceVendeur: l.referenceVendeur || null,
-          quantite: Number(l.quantite),
+          quantite: Number(l.quantite) || 1,
           unite: l.unite || "UN",
-          prixUnitaireHT: Number(l.prixUnitaireHT),
-          remiseMontant: Number(l.remiseMontant || 0),
+          prixUnitaireHT: Number(l.prixUnitaireHT) || 0,
+          remiseMontant: Number(l.remiseMontant) || 0,
           categorieTva: l.categorieTva,
-          tauxTva: Number(l.tauxTva || 0),
+          tauxTva: Number(l.tauxTva) || 0,
         })),
       };
 
@@ -239,20 +283,40 @@ export default function InvoiceForm() {
         : await invoiceApi.create(payload);
 
       toast.dismiss(tid);
-      toast.success("✅ Factur-X générée et signée !");
+      toast.success(
+        isEdit ? "✅ Facture mise à jour !" : "✅ Factur-X générée et signée !",
+      );
       setResult(res.data);
-    } catch {
+    } catch (err) {
       toast.dismiss(tid);
+      // L'intercepteur Axios affiche déjà le toast d'erreur
+      console.error("Erreur soumission facture:", err.response?.data);
     } finally {
       setSubmitting(false);
     }
   };
 
-  // ─── Télécharger le PDF ───────────────────────────────
-  const downloadPdf = async () => {
-    if (!result?.id) return;
+  // ─── Suppression ──────────────────────────────────────
+  const handleDelete = async () => {
+    setDeleting(true);
     try {
-      const res = await invoiceApi.downloadPdf(result.id);
+      await invoiceApi.delete(id);
+      toast.success("Facture supprimée");
+      navigate("/dashboard");
+    } catch {
+      /* géré par intercepteur */
+    } finally {
+      setDeleting(false);
+      setShowDelete(false);
+    }
+  };
+
+  // ─── Télécharger PDF ──────────────────────────────────
+  const downloadPdf = async () => {
+    const factureId = result?.id || id;
+    if (!factureId) return;
+    try {
+      const res = await invoiceApi.downloadPdf(factureId);
       const url = URL.createObjectURL(
         new Blob([res.data], { type: "application/pdf" }),
       );
@@ -262,11 +326,11 @@ export default function InvoiceForm() {
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      toast.error("Erreur lors du téléchargement");
+      toast.error("PDF non disponible");
     }
   };
 
-  // ─── Écran de chargement ──────────────────────────────
+  // ─── Écran chargement ─────────────────────────────────
   if (loading)
     return (
       <div className="flex justify-center items-center h-64">
@@ -274,7 +338,7 @@ export default function InvoiceForm() {
       </div>
     );
 
-  // ─── Écran de succès ──────────────────────────────────
+  // ─── Écran succès ─────────────────────────────────────
   if (result)
     return (
       <div className="max-w-lg mx-auto px-4 py-8">
@@ -289,47 +353,56 @@ export default function InvoiceForm() {
             <CheckCircle2 size={32} className="text-emerald-600" />
           </div>
           <h2 className="text-xl font-bold text-gray-900 mb-1">
-            Factur-X générée !
+            {isEdit ? "Facture mise à jour !" : "Factur-X générée !"}
           </h2>
           <p className="text-gray-500 text-sm mb-5">
-            Facture <strong>{result.numeroFacture}</strong> créée, signée et
-            prête.
+            Facture{" "}
+            <strong>{result.numeroFacture || form.numeroFacture}</strong>{" "}
+            enregistrée avec succès.
           </p>
 
           {/* Infos techniques */}
-          <div
-            className="bg-gray-50 rounded-xl p-4 text-left
-                        space-y-2 mb-6 text-xs border border-gray-100"
-          >
-            <div className="flex justify-between gap-2">
-              <span className="text-gray-500 shrink-0">UUID traçabilité</span>
-              <span className="font-mono text-gray-700 truncate">
-                {result.uuid}
-              </span>
+          {result.uuid && (
+            <div
+              className="bg-gray-50 rounded-xl p-4 text-left
+                          space-y-2 mb-6 text-xs border border-gray-100"
+            >
+              <div className="flex justify-between gap-2">
+                <span className="text-gray-500 shrink-0">UUID</span>
+                <span className="font-mono text-gray-700 truncate">
+                  {result.uuid}
+                </span>
+              </div>
+              {result.hashSha256 && (
+                <div className="flex justify-between gap-2">
+                  <span className="text-gray-500 shrink-0">Hash SHA-256</span>
+                  <span className="font-mono text-gray-700 truncate">
+                    {result.hashSha256.substring(0, 16)}…
+                  </span>
+                </div>
+              )}
+              {result.totalTtc && (
+                <div className="flex justify-between gap-2">
+                  <span className="text-gray-500">Total TTC</span>
+                  <span className="font-bold text-emerald-700">
+                    {formatEuros(result.totalTtc)}
+                  </span>
+                </div>
+              )}
             </div>
-            <div className="flex justify-between gap-2">
-              <span className="text-gray-500 shrink-0">Hash SHA-256</span>
-              <span className="font-mono text-gray-700 truncate">
-                {result.hashSha256?.substring(0, 16)}…
-              </span>
-            </div>
-            <div className="flex justify-between gap-2">
-              <span className="text-gray-500">Total TTC</span>
-              <span className="font-bold text-emerald-700">
-                {formatEuros(result.totalTtc)}
-              </span>
-            </div>
-          </div>
+          )}
 
           <div className="flex flex-col gap-3">
-            <button
-              onClick={downloadPdf}
-              className="flex items-center justify-center gap-2 w-full
-                       py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700
-                       text-white font-semibold transition-colors"
-            >
-              <Download size={18} /> Télécharger le PDF Factur-X
-            </button>
+            {(result.hashSha256 || result.pdfUrl) && (
+              <button
+                onClick={downloadPdf}
+                className="flex items-center justify-center gap-2 w-full
+                         py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700
+                         text-white font-semibold transition-colors"
+              >
+                <Download size={18} /> Télécharger le PDF Factur-X
+              </button>
+            )}
             <button
               onClick={() => navigate("/dashboard")}
               className="w-full py-3 rounded-xl border border-gray-200
@@ -344,14 +417,14 @@ export default function InvoiceForm() {
                        text-gray-600 hover:bg-gray-50 font-medium
                        transition-colors text-sm"
             >
-              Créer une autre facture
+              {isEdit ? "Continuer à modifier" : "Créer une autre facture"}
             </button>
           </div>
         </div>
       </div>
     );
 
-  // ─── Formulaire principal ─────────────────────────────
+  // ─── Texte légal pénalités ────────────────────────────
   const mentionPenalites =
     `Pénalités de retard : ${form.tauxPenalitesRetard}% par an. ` +
     `Indemnité forfaitaire de recouvrement : ${form.indemniteRecouvrement} € ` +
@@ -375,7 +448,44 @@ export default function InvoiceForm() {
         <FileText size={28} className="text-emerald-400" />
       </div>
 
-      {/* ══ SECTION 1 : Identification ═══════════════════ */}
+      {/* ── Confirmation suppression ── */}
+      {showDelete && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+          <p className="text-sm font-semibold text-red-700 mb-2">
+            Supprimer la facture {form.numeroFacture} ?
+          </p>
+          <p className="text-xs text-red-600 mb-3">
+            Cette action est irréversible. Les archives légales doivent être
+            conservées 10 ans.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting}
+              className="flex-1 py-2 rounded-lg bg-red-600 hover:bg-red-700
+                         text-white text-sm font-semibold transition-colors
+                         disabled:opacity-50"
+            >
+              {deleting ? (
+                <Loader2 size={14} className="animate-spin mx-auto" />
+              ) : (
+                "Confirmer la suppression"
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDelete(false)}
+              className="flex-1 py-2 rounded-lg border border-gray-200
+                         text-gray-600 hover:bg-gray-50 text-sm transition-colors"
+            >
+              Annuler
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ══ SECTION 1 : Identification ══ */}
       <Section title="Identification de la facture" icon={FileText}>
         <Field
           label="Numéro de facture"
@@ -401,7 +511,8 @@ export default function InvoiceForm() {
               type="text"
               value={form.uuid}
               readOnly
-              className={`${inputCls} bg-gray-50 font-mono text-xs text-gray-500 flex-1`}
+              className={`${inputCls} bg-gray-50 font-mono text-xs
+                          text-gray-500 flex-1`}
             />
             <button
               type="button"
@@ -426,10 +537,7 @@ export default function InvoiceForm() {
           </select>
         </Field>
 
-        <Field
-          label="Objet de la facture"
-          hint="Recommandé DGFiP 2026 — décrit la nature de la prestation"
-        >
+        <Field label="Objet de la facture" hint="Recommandé DGFiP 2026">
           <input
             type="text"
             value={form.objet}
@@ -459,9 +567,13 @@ export default function InvoiceForm() {
         </div>
       </Section>
 
-      {/* ══ SECTION 2 : Émetteur (Vendeur) ═══════════════ */}
+      {/* ══ SECTION 2 : Émetteur ══ */}
       <Section title="Émetteur (Vendeur)" icon={Building2}>
-        <Field label="Sélectionner l'émetteur" required>
+        <Field
+          label="Sélectionner l'émetteur"
+          required
+          error={errors.vendeurId}
+        >
           <select
             value={form.vendeurId}
             onChange={(e) =>
@@ -469,7 +581,7 @@ export default function InvoiceForm() {
             }
             className={selectCls}
           >
-            <option value="">— Choisir —</option>
+            <option value="">— Choisir un émetteur —</option>
             {customers
               .filter((c) => c.estVendeur)
               .map((c) => (
@@ -479,6 +591,23 @@ export default function InvoiceForm() {
               ))}
           </select>
         </Field>
+
+        {customers.filter((c) => c.estVendeur).length === 0 && (
+          <div
+            className="bg-amber-50 border border-amber-200 rounded-xl
+                          p-3 text-xs text-amber-700 flex items-center gap-2"
+          >
+            <Info size={13} />
+            Aucun émetteur trouvé.{" "}
+            <button
+              type="button"
+              onClick={() => navigate("/clients")}
+              className="underline font-semibold"
+            >
+              Créer un émetteur dans Clients
+            </button>
+          </div>
+        )}
 
         {vendeurSel && (
           <div
@@ -491,7 +620,6 @@ export default function InvoiceForm() {
             <p className="text-emerald-700">
               {vendeurSel.adresse}, {vendeurSel.codePostal} {vendeurSel.ville}
             </p>
-            <p className="text-emerald-700">SIREN : {vendeurSel.siren}</p>
             {vendeurSel.siret && (
               <p className="text-emerald-700">SIRET : {vendeurSel.siret}</p>
             )}
@@ -511,16 +639,11 @@ export default function InvoiceForm() {
                 </span>
               </div>
             )}
-            {vendeurSel.iban && (
-              <p className="text-emerald-700 font-mono">
-                IBAN : {vendeurSel.iban}
-              </p>
-            )}
           </div>
         )}
       </Section>
 
-      {/* ══ SECTION 3 : Destinataire (Acheteur) ══════════ */}
+      {/* ══ SECTION 3 : Acheteur ══ */}
       <Section title="Destinataire (Acheteur)" icon={User}>
         <Field
           label="Sélectionner l'acheteur"
@@ -543,6 +666,23 @@ export default function InvoiceForm() {
           </select>
         </Field>
 
+        {customers.length === 0 && (
+          <div
+            className="bg-amber-50 border border-amber-200 rounded-xl
+                          p-3 text-xs text-amber-700 flex items-center gap-2"
+          >
+            <Info size={13} />
+            Aucun client trouvé.{" "}
+            <button
+              type="button"
+              onClick={() => navigate("/clients")}
+              className="underline font-semibold"
+            >
+              Créer un client dans Clients
+            </button>
+          </div>
+        )}
+
         {form.acheteurId &&
           (() => {
             const ach = customers.find((c) => c.id === Number(form.acheteurId));
@@ -562,27 +702,19 @@ export default function InvoiceForm() {
                     SIRET (BT-29) : <strong>{ach.siret}</strong>
                   </p>
                 )}
-                {ach.numeroTvaIntracommunautaire && (
-                  <p className="text-blue-700">
-                    N° TVA (BT-48) : {ach.numeroTvaIntracommunautaire}
-                  </p>
-                )}
               </div>
             ) : null;
           })()}
       </Section>
 
-      {/* ══ SECTION 4 : Références commerciales ══════════ */}
+      {/* ══ SECTION 4 : Références ══ */}
       <Section
         title="Références commerciales"
         icon={FileText}
         defaultOpen={false}
       >
         <div className="grid grid-cols-2 gap-3">
-          <Field
-            label="N° bon de commande (BT-13)"
-            hint="Référence de l'acheteur"
-          >
+          <Field label="N° bon de commande (BT-13)">
             <input
               type="text"
               value={form.numeroBonCommande}
@@ -621,7 +753,7 @@ export default function InvoiceForm() {
         </div>
       </Section>
 
-      {/* ══ SECTION 5 : Lignes de facturation ═══════════ */}
+      {/* ══ SECTION 5 : Lignes ══ */}
       <Section
         title="Lignes de facturation"
         icon={FileText}
@@ -638,14 +770,17 @@ export default function InvoiceForm() {
         <InvoiceLines lines={lignes} onChange={setLignes} isMicro={isMicro} />
       </Section>
 
-      {/* ══ SECTION 6 : Conditions de paiement ══════════ */}
+      {/* ══ SECTION 6 : Conditions de paiement ══ */}
       <Section title="Conditions de paiement" icon={CreditCard}>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Délai de paiement">
             <select
               value={form.delaiPaiementJours}
               onChange={(e) =>
-                setForm((p) => ({ ...p, delaiPaiementJours: e.target.value }))
+                setForm((p) => ({
+                  ...p,
+                  delaiPaiementJours: e.target.value,
+                }))
               }
               className={selectCls}
             >
@@ -670,10 +805,9 @@ export default function InvoiceForm() {
             </select>
           </Field>
         </div>
-
-        <Field label="Conditions libres" hint="Texte affiché sur la facture">
+        <Field label="Conditions libres">
           <textarea
-            value={form.conditionsPaiement || ""}
+            value={form.conditionsPaiement}
             onChange={set("conditionsPaiement")}
             rows={2}
             placeholder={`Paiement à ${form.delaiPaiementJours} jours par virement.`}
@@ -682,7 +816,7 @@ export default function InvoiceForm() {
         </Field>
       </Section>
 
-      {/* ══ SECTION 7 : Pénalités (obligatoire L441-10) ═ */}
+      {/* ══ SECTION 7 : Pénalités ══ */}
       <Section title="Pénalités de retard" icon={AlertCircle}>
         <div
           className="bg-amber-50 border border-amber-200 rounded-xl
@@ -692,14 +826,10 @@ export default function InvoiceForm() {
             Mentions obligatoires (art. L441-10 C.com.)
           </strong>
           Toute facture B2B doit mentionner le taux de pénalités et l'indemnité
-          forfaitaire de recouvrement de 40 € minimum.
+          forfaitaire de 40 € minimum.
         </div>
-
         <div className="grid grid-cols-2 gap-3">
-          <Field
-            label="Taux pénalités (%/an)"
-            hint="Minimum légal : 3× taux d'intérêt légal"
-          >
+          <Field label="Taux pénalités (%/an)">
             <input
               type="number"
               step="0.1"
@@ -709,7 +839,7 @@ export default function InvoiceForm() {
               className={inputCls}
             />
           </Field>
-          <Field label="Indemnité recouvrement (€)" hint="Minimum légal : 40 €">
+          <Field label="Indemnité recouvrement (€)">
             <input
               type="number"
               step="1"
@@ -720,8 +850,6 @@ export default function InvoiceForm() {
             />
           </Field>
         </div>
-
-        {/* Aperçu du texte légal généré */}
         <div
           className="bg-gray-50 rounded-xl p-3 text-xs
                         text-gray-500 italic border border-gray-100"
@@ -730,24 +858,12 @@ export default function InvoiceForm() {
         </div>
       </Section>
 
-      {/* ══ SECTION 8 : DGFiP 2026 — PDP ═══════════════ */}
+      {/* ══ SECTION 8 : DGFiP 2026 ══ */}
       <Section
         title="Paramètres DGFiP 2026 — PDP"
         icon={Shield}
         defaultOpen={false}
       >
-        <div
-          className="bg-blue-50 border border-blue-200 rounded-xl
-                        p-3 text-xs text-blue-700"
-        >
-          <strong className="block mb-1">
-            Réforme facturation électronique 2026
-          </strong>
-          L'identifiant PDP est requis pour la transmission des factures
-          électroniques via un Prestataire de Dématérialisation Partenaire (PDP)
-          agréé DGFiP.
-        </div>
-
         <div className="grid grid-cols-2 gap-3">
           <Field label="Identifiant PDP (BT-23)">
             <input
@@ -763,47 +879,50 @@ export default function InvoiceForm() {
               type="text"
               value={form.nomPdp}
               onChange={set("nomPdp")}
-              placeholder="Chorus Pro…"
+              placeholder="Chorus Pro"
               className={inputCls}
             />
           </Field>
         </div>
-
-        {isMicro && (
-          <div
-            className="bg-amber-50 rounded-xl p-3 text-xs
-                          text-amber-700 border border-amber-200
-                          flex items-center gap-2"
-          >
-            <Info size={13} />
-            <span>
-              Micro-entreprise détectée — la mention "TVA non applicable, art.
-              293 B du CGI" sera ajoutée automatiquement.
-            </span>
-          </div>
-        )}
       </Section>
 
-      {/* ── Bouton de génération ── */}
-      <button
-        type="submit"
-        disabled={submitting}
-        className="w-full py-4 rounded-xl bg-emerald-600 hover:bg-emerald-700
-                   disabled:opacity-50 disabled:cursor-not-allowed
-                   text-white font-bold text-base transition-colors
-                   flex items-center justify-center gap-2
-                   shadow-sm shadow-emerald-200"
-      >
-        {submitting ? (
-          <>
-            <Loader2 size={20} className="animate-spin" /> Génération en cours…
-          </>
-        ) : (
-          <>
-            <Send size={20} /> Générer le Factur-X
-          </>
+      {/* ── Boutons d'action ── */}
+      <div className="space-y-3 pb-2">
+        {/* Générer / Sauvegarder */}
+        <button
+          type="submit"
+          disabled={submitting}
+          className="w-full py-4 rounded-xl bg-emerald-600 hover:bg-emerald-700
+                     disabled:opacity-50 disabled:cursor-not-allowed
+                     text-white font-bold text-base transition-colors
+                     flex items-center justify-center gap-2
+                     shadow-sm shadow-emerald-200"
+        >
+          {submitting ? (
+            <>
+              <Loader2 size={20} className="animate-spin" /> En cours…
+            </>
+          ) : (
+            <>
+              <Send size={20} />
+              {isEdit ? "Mettre à jour la facture" : "Générer le Factur-X"}
+            </>
+          )}
+        </button>
+
+        {/* Supprimer (mode édition uniquement) */}
+        {isEdit && !showDelete && (
+          <button
+            type="button"
+            onClick={() => setShowDelete(true)}
+            className="w-full py-3 rounded-xl border border-red-200
+                       text-red-500 hover:bg-red-50 font-medium text-sm
+                       transition-colors flex items-center justify-center gap-2"
+          >
+            <Trash2 size={16} /> Supprimer cette facture
+          </button>
         )}
-      </button>
+      </div>
 
       <p className="text-center text-xs text-gray-400 pb-2">
         PDF/A-3b · XML EN 16931 EXTENDED · Signature RSA SHA-256 · UUID DGFiP

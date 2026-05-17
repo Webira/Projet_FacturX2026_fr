@@ -1,7 +1,11 @@
 // ============================================================
 // src/pages/Dashboard.jsx
 // Tableau de bord — suivi factures et devis
-// Statuts DGFiP 2026, échéances, relances, KPIs
+// CORRECTIONS :
+// 1. Boutons Modifier et Supprimer sur chaque facture/devis
+// 2. Conversion devis → Factur-X depuis le dashboard
+// 3. Gestion des statuts DGFiP 2026
+// 4. Alertes retard et relances
 // ============================================================
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
@@ -19,7 +23,10 @@ import {
   ChevronRight,
   Loader2,
   ArrowUpRight,
-  CheckCircle,
+  Pencil,
+  Trash2,
+  Building2,
+  Plus,
 } from "lucide-react";
 
 import { invoiceApi, quoteApi, dashboardApi } from "../api/apiClient";
@@ -51,9 +58,8 @@ function StatCard({
       onClick={onClick}
       className={`w-full text-left p-4 rounded-xl border
                   ${palette[color] || palette.emerald}
-                  hover:scale-[1.02] transition-transform active:scale-100
-                  focus:outline-none focus:ring-2 focus:ring-offset-1
-                  focus:ring-emerald-400`}
+                  hover:scale-[1.02] transition-transform
+                  active:scale-100 focus:outline-none`}
     >
       <div className="flex items-start justify-between mb-2">
         <Icon size={20} />
@@ -66,7 +72,7 @@ function StatCard({
   );
 }
 
-// ─── Badge jours de retard ────────────────────────────────
+// ─── Badge retard ─────────────────────────────────────────
 function RetardBadge({ jours }) {
   if (jours <= 0) return null;
   const color =
@@ -82,21 +88,57 @@ function RetardBadge({ jours }) {
   );
 }
 
-// ─── Carte d'une facture ──────────────────────────────────
-function InvoiceCard({ invoice, onStatusChange, onRelance, onDownload }) {
+// ─── Carte Facture ────────────────────────────────────────
+function InvoiceCard({
+  invoice,
+  onStatusChange,
+  onRelance,
+  onDownload,
+  onEdit,
+  onDelete,
+}) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
   const joursRetard = calculerJoursRetard(invoice.dateEcheance);
   const enRetard =
     joursRetard > 0 &&
     invoice.statut !== "Payee" &&
     invoice.statut !== "Annulee";
 
+  if (confirmDel)
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+        <p className="text-sm font-semibold text-red-700 mb-1">
+          Supprimer la facture <strong>{invoice.numeroFacture}</strong> ?
+        </p>
+        <p className="text-xs text-red-500 mb-3">
+          Action irréversible. Archives légales conservées 10 ans.
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => onDelete(invoice.id)}
+            className="flex-1 py-2 rounded-lg bg-red-600 hover:bg-red-700
+                     text-white text-xs font-semibold transition-colors"
+          >
+            Confirmer
+          </button>
+          <button
+            onClick={() => setConfirmDel(false)}
+            className="flex-1 py-2 rounded-lg border border-gray-200
+                     text-gray-600 text-xs hover:bg-gray-50 transition-colors"
+          >
+            Annuler
+          </button>
+        </div>
+      </div>
+    );
+
   return (
     <div
       className={`bg-white rounded-xl border p-4 space-y-3 shadow-sm
                      ${enRetard ? "border-orange-200" : "border-gray-200"}`}
     >
-      {/* Ligne 1 : Numéro + Statut + Montant */}
+      {/* Ligne 1 : Infos + Montant */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -125,112 +167,160 @@ function InvoiceCard({ invoice, onStatusChange, onRelance, onDownload }) {
         </div>
       </div>
 
-      {/* Ligne 2 : Échéance + Actions */}
+      {/* Ligne 2 : Échéance */}
+      {invoice.dateEcheance && (
+        <p
+          className={`text-xs ${
+            enRetard ? "text-red-600 font-semibold" : "text-gray-500"
+          }`}
+        >
+          Échéance : {formatDate(invoice.dateEcheance)}
+        </p>
+      )}
+
+      {/* Ligne 3 : Actions */}
       <div
-        className="flex items-center justify-between gap-2
-                      pt-2 border-t border-gray-50"
+        className="flex items-center gap-1.5 pt-1 border-t border-gray-50
+                      flex-wrap"
       >
-        <div className="text-xs">
-          {invoice.dateEcheance ? (
-            <span
-              className={
-                enRetard ? "text-red-600 font-semibold" : "text-gray-500"
-              }
-            >
-              Échéance : {formatDate(invoice.dateEcheance)}
-            </span>
-          ) : (
-            <span className="text-gray-400">Pas d'échéance</span>
-          )}
-        </div>
+        {/* Modifier */}
+        <button
+          onClick={() => onEdit(invoice.id)}
+          title="Modifier la facture"
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg
+                     bg-blue-50 hover:bg-blue-100 text-blue-600 text-xs
+                     font-medium transition-colors"
+        >
+          <Pencil size={13} /> Modifier
+        </button>
 
-        <div className="flex items-center gap-1">
-          {/* Télécharger PDF */}
+        {/* Télécharger PDF */}
+        <button
+          onClick={() => onDownload(invoice.id)}
+          title="Télécharger le PDF Factur-X"
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg
+                     bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs
+                     font-medium transition-colors"
+        >
+          <Download size={13} /> PDF
+        </button>
+
+        {/* Relancer si en retard */}
+        {enRetard && (
           <button
-            onClick={() => onDownload(invoice.id)}
-            title="Télécharger le PDF Factur-X"
-            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400
-                       hover:text-gray-600 transition-colors"
+            onClick={() => onRelance(invoice.id, invoice.numeroFacture)}
+            title="Enregistrer une relance"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg
+                       bg-orange-50 hover:bg-orange-100 text-orange-600
+                       text-xs font-medium transition-colors"
           >
-            <Download size={15} />
+            <Bell size={13} /> Relancer
           </button>
+        )}
 
-          {/* Relancer si en retard */}
-          {enRetard && (
-            <button
-              onClick={() => onRelance(invoice.id, invoice.numeroFacture)}
-              title="Enregistrer une relance"
-              className="p-1.5 rounded-lg hover:bg-orange-50 text-orange-400
-                         hover:text-orange-600 transition-colors"
-            >
-              <Bell size={15} />
-            </button>
+        {/* Menu statut */}
+        <div className="relative ml-auto">
+          <button
+            onClick={() => setMenuOpen((o) => !o)}
+            className="px-2.5 py-1.5 rounded-lg bg-gray-100
+                       hover:bg-gray-200 text-gray-600 text-xs
+                       font-medium transition-colors"
+          >
+            Statut ▾
+          </button>
+          {menuOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-10"
+                onClick={() => setMenuOpen(false)}
+              />
+              <div
+                className="absolute right-0 top-full mt-1 bg-white
+                              border border-gray-200 rounded-xl shadow-lg
+                              z-20 min-w-[190px] overflow-hidden animate-fade-in"
+              >
+                {Object.entries(INVOICE_STATUTS)
+                  .filter(([key]) => key !== invoice.statut)
+                  .map(([key, info]) => (
+                    <button
+                      key={key}
+                      onClick={() => {
+                        onStatusChange(invoice.id, key);
+                        setMenuOpen(false);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2
+                                 text-xs hover:bg-gray-50 text-left
+                                 transition-colors"
+                    >
+                      <span>{info.icon}</span>
+                      <span>{info.label}</span>
+                    </button>
+                  ))}
+              </div>
+            </>
           )}
-
-          {/* Menu statut */}
-          <div className="relative">
-            <button
-              onClick={() => setMenuOpen((o) => !o)}
-              className="px-2.5 py-1.5 rounded-lg bg-gray-100
-                         hover:bg-gray-200 text-gray-600 text-xs
-                         font-medium transition-colors"
-            >
-              Statut ▾
-            </button>
-
-            {menuOpen && (
-              <>
-                {/* Overlay pour fermer le menu */}
-                <div
-                  className="fixed inset-0 z-10"
-                  onClick={() => setMenuOpen(false)}
-                />
-
-                <div
-                  className="absolute right-0 top-full mt-1 bg-white
-                                border border-gray-200 rounded-xl shadow-lg
-                                z-20 min-w-[190px] overflow-hidden
-                                animate-fade-in"
-                >
-                  {Object.entries(INVOICE_STATUTS)
-                    .filter(([key]) => key !== invoice.statut)
-                    .map(([key, info]) => (
-                      <button
-                        key={key}
-                        onClick={() => {
-                          onStatusChange(invoice.id, key);
-                          setMenuOpen(false);
-                        }}
-                        className="w-full flex items-center gap-2 px-3 py-2
-                                   text-xs hover:bg-gray-50 text-left
-                                   transition-colors"
-                      >
-                        <span>{info.icon}</span>
-                        <span>{info.label}</span>
-                      </button>
-                    ))}
-                </div>
-              </>
-            )}
-          </div>
         </div>
+
+        {/* Supprimer */}
+        <button
+          onClick={() => setConfirmDel(true)}
+          title="Supprimer"
+          className="p-1.5 rounded-lg hover:bg-red-50 text-red-400
+                     hover:text-red-600 transition-colors"
+        >
+          <Trash2 size={14} />
+        </button>
       </div>
     </div>
   );
 }
 
-// ─── Carte d'un devis ─────────────────────────────────────
-function QuoteCard({ quote, onConvert }) {
+// ─── Carte Devis ──────────────────────────────────────────
+function QuoteCard({ quote, onConvert, onEdit, onDelete }) {
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [converting, setConverting] = useState(false);
   const estExpire =
     quote.dateValidite &&
     new Date(quote.dateValidite) < new Date() &&
     quote.statut === "EnvoyeClient";
 
+  const handleConvert = async () => {
+    setConverting(true);
+    await onConvert(quote.id);
+    setConverting(false);
+  };
+
+  if (confirmDel)
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+        <p className="text-sm font-semibold text-red-700 mb-3">
+          Supprimer le devis <strong>{quote.numeroDevis}</strong> ?
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => onDelete(quote.id)}
+            className="flex-1 py-2 rounded-lg bg-red-600 hover:bg-red-700
+                     text-white text-xs font-semibold transition-colors"
+          >
+            Confirmer
+          </button>
+          <button
+            onClick={() => setConfirmDel(false)}
+            className="flex-1 py-2 rounded-lg border border-gray-200
+                     text-gray-600 text-xs hover:bg-gray-50 transition-colors"
+          >
+            Annuler
+          </button>
+        </div>
+      </div>
+    );
+
   return (
     <div
-      className={`bg-white rounded-xl border p-4 space-y-2.5 shadow-sm
+      className={`bg-white rounded-xl border p-4 space-y-3 shadow-sm
                      ${estExpire ? "border-red-200" : "border-gray-200"}`}
     >
+      {/* Infos */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -266,21 +356,51 @@ function QuoteCard({ quote, onConvert }) {
         </div>
       </div>
 
-      {/* Bouton de conversion */}
-      {quote.statut !== "ConvVertiEnFacture" &&
-        quote.statut !== "RefuseClient" &&
-        !estExpire && (
-          <button
-            onClick={() => onConvert(quote.id)}
-            className="w-full flex items-center justify-center gap-2
-                     py-2 rounded-lg bg-emerald-50 hover:bg-emerald-100
-                     text-emerald-700 text-xs font-semibold
-                     transition-colors border border-emerald-200"
-          >
-            <ArrowUpRight size={14} />
-            Convertir en Facture Factur-X
-          </button>
-        )}
+      {/* Actions */}
+      <div
+        className="flex items-center gap-1.5 pt-1 border-t border-gray-50
+                      flex-wrap"
+      >
+        {/* Modifier */}
+        <button
+          onClick={() => onEdit(quote.id)}
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg
+                     bg-blue-50 hover:bg-blue-100 text-blue-600 text-xs
+                     font-medium transition-colors"
+        >
+          <Pencil size={13} /> Modifier
+        </button>
+
+        {/* Convertir en Factur-X */}
+        {quote.statut !== "ConvVertiEnFacture" &&
+          quote.statut !== "RefuseClient" &&
+          !estExpire && (
+            <button
+              onClick={handleConvert}
+              disabled={converting}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg
+                       bg-emerald-50 hover:bg-emerald-100 text-emerald-700
+                       text-xs font-semibold transition-colors
+                       disabled:opacity-50 border border-emerald-200"
+            >
+              {converting ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <ArrowUpRight size={13} />
+              )}
+              {converting ? "Génération…" : "→ Factur-X"}
+            </button>
+          )}
+
+        {/* Supprimer */}
+        <button
+          onClick={() => setConfirmDel(true)}
+          className="p-1.5 rounded-lg hover:bg-red-50 text-red-400
+                     hover:text-red-600 transition-colors ml-auto"
+        >
+          <Trash2 size={14} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -299,7 +419,7 @@ export default function Dashboard() {
   const [search, setSearch] = useState("");
   const [filterStatut, setFilter] = useState("");
 
-  // ─── Chargement des données ───────────────────────────
+  // ─── Chargement ───────────────────────────────────────
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
@@ -322,15 +442,13 @@ export default function Dashboard() {
     loadAll();
   }, [loadAll]);
 
-  // ─── Actions ──────────────────────────────────────────
+  // ─── Actions Factures ─────────────────────────────────
   const handleStatusChange = async (id, statut) => {
     try {
       await invoiceApi.updateStatut(id, statut);
       toast.success(`Statut → ${INVOICE_STATUTS[statut]?.label}`);
       loadAll();
-    } catch {
-      /* géré par l'intercepteur Axios */
-    }
+    } catch {}
   };
 
   const handleRelance = async (id, numero) => {
@@ -338,9 +456,7 @@ export default function Dashboard() {
       await invoiceApi.enregistrerRelance(id);
       toast.success(`Relance enregistrée — ${numero}`);
       loadAll();
-    } catch {
-      /* géré */
-    }
+    } catch {}
   };
 
   const handleDownload = async (id) => {
@@ -359,21 +475,46 @@ export default function Dashboard() {
     }
   };
 
-  const handleConvert = async (quoteId) => {
-    const tid = toast.loading("Conversion en cours…");
+  const handleEditInvoice = (id) => navigate(`/facture/${id}`);
+
+  const handleDeleteInvoice = async (id) => {
     try {
-      await quoteApi.convertirEnFacture(quoteId, {
+      await invoiceApi.delete(id);
+      toast.success("Facture supprimée");
+      loadAll();
+    } catch {}
+  };
+
+  // ─── Actions Devis ────────────────────────────────────
+  const handleConvert = async (quoteId) => {
+    const tid = toast.loading("Conversion en Factur-X…");
+    try {
+      const res = await quoteApi.convertirEnFacture(quoteId, {
         dateFacture: new Date().toISOString().split("T")[0],
       });
       toast.dismiss(tid);
       toast.success("✅ Converti en Factur-X !");
       loadAll();
+      // Naviguer vers la facture générée
+      if (res.data?.factureId || res.data?.id) {
+        navigate(`/facture/${res.data.factureId || res.data.id}`);
+      }
     } catch {
       toast.dismiss(tid);
     }
   };
 
-  // ─── Factures filtrées localement ─────────────────────
+  const handleEditQuote = (id) => navigate(`/devis/${id}`);
+
+  const handleDeleteQuote = async (id) => {
+    try {
+      await quoteApi.delete(id);
+      toast.success("Devis supprimé");
+      loadAll();
+    } catch {}
+  };
+
+  // ─── Filtrage local ───────────────────────────────────
   const invoicesFiltrees = invoices.filter((inv) => {
     const matchSearch =
       !search ||
@@ -383,7 +524,6 @@ export default function Dashboard() {
     return matchSearch && matchStatut;
   });
 
-  // ─── Écran de chargement initial ─────────────────────
   if (loading && !stats)
     return (
       <div className="flex justify-center items-center h-64">
@@ -414,7 +554,7 @@ export default function Dashboard() {
         </button>
       </div>
 
-      {/* ══ CARTES STATISTIQUES ══════════════════════════ */}
+      {/* ══ CARTES KPI ══ */}
       {stats && (
         <div className="grid grid-cols-2 gap-3">
           <StatCard
@@ -425,55 +565,40 @@ export default function Dashboard() {
           />
           <StatCard
             label="Factures en retard"
-            value={stats.totalFacturesEnRetard ?? stats.nbFacturesEnRetard ?? 0}
+            value={stats.totalFacturesEnRetard ?? 0}
             sublabel={
               stats.montantEnRetard > 0
                 ? formatEuros(stats.montantEnRetard)
                 : undefined
             }
             icon={AlertTriangle}
-            color={
-              (stats.totalFacturesEnRetard ?? stats.nbFacturesEnRetard ?? 0) > 0
-                ? "red"
-                : "emerald"
-            }
+            color={(stats.totalFacturesEnRetard ?? 0) > 0 ? "red" : "emerald"}
             onClick={() => setFilter("Acceptee")}
           />
           <StatCard
             label="Relances à envoyer"
-            value={stats.aRelancer ?? stats.nbARelancer ?? 0}
+            value={stats.aRelancer ?? 0}
             icon={Bell}
-            color={
-              (stats.aRelancer ?? stats.nbARelancer ?? 0) > 0
-                ? "orange"
-                : "emerald"
-            }
+            color={(stats.aRelancer ?? 0) > 0 ? "orange" : "emerald"}
           />
           <StatCard
             label="Devis expirant"
             sublabel="dans 7 jours"
-            value={stats.devisExpirant ?? stats.nbDevisExpirant ?? 0}
+            value={stats.devisExpirant ?? 0}
             icon={Clock}
-            color={
-              (stats.devisExpirant ?? stats.nbDevisExpirant ?? 0) > 0
-                ? "violet"
-                : "emerald"
-            }
+            color={(stats.devisExpirant ?? 0) > 0 ? "violet" : "emerald"}
             onClick={() => setTab("devis")}
           />
         </div>
       )}
 
-      {/* ══ ALERTES RETARD ═══════════════════════════════ */}
+      {/* ══ ALERTES RETARD ══ */}
       {stats?.facturesEnRetard?.length > 0 && (
-        <div
-          className="bg-red-50 rounded-xl border border-red-200
-                        overflow-hidden"
-        >
+        <div className="bg-red-50 rounded-xl border border-red-200 overflow-hidden">
           <div className="px-4 py-2.5 bg-red-100 flex items-center gap-2">
             <AlertTriangle size={16} className="text-red-600" />
             <span className="text-sm font-semibold text-red-700">
-              {stats.facturesEnRetard.length} facture(s) en retard de paiement
+              {stats.facturesEnRetard.length} facture(s) en retard
             </span>
           </div>
           <div className="divide-y divide-red-100">
@@ -488,7 +613,7 @@ export default function Dashboard() {
                   </p>
                   <p className="text-xs text-gray-500">{f.acheteurNom}</p>
                 </div>
-                <div className="text-right">
+                <div className="text-right flex items-center gap-2">
                   <p className="text-sm font-bold text-red-600">
                     {formatEuros(f.soldeRestantDu)}
                   </p>
@@ -500,7 +625,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ══ ONGLETS FACTURES / DEVIS ═════════════════════ */}
+      {/* ══ ONGLETS ══ */}
       <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
         {[
           {
@@ -543,7 +668,7 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* ══ FILTRES (onglet factures) ════════════════════ */}
+      {/* ══ FILTRES FACTURES ══ */}
       {tab === "factures" && (
         <div className="flex gap-2">
           <div className="relative flex-1">
@@ -577,7 +702,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ══ LISTE DES FACTURES ═══════════════════════════ */}
+      {/* ══ LISTE FACTURES ══ */}
       {tab === "factures" && (
         <div className="space-y-3">
           {invoicesFiltrees.length === 0 ? (
@@ -585,7 +710,7 @@ export default function Dashboard() {
               <FileText size={36} className="mx-auto mb-3 opacity-30" />
               <p className="text-sm font-medium">
                 {search || filterStatut
-                  ? "Aucune facture ne correspond à la recherche"
+                  ? "Aucune facture ne correspond"
                   : "Aucune facture pour l'instant"}
               </p>
               <button
@@ -605,13 +730,15 @@ export default function Dashboard() {
                 onStatusChange={handleStatusChange}
                 onRelance={handleRelance}
                 onDownload={handleDownload}
+                onEdit={handleEditInvoice}
+                onDelete={handleDeleteInvoice}
               />
             ))
           )}
         </div>
       )}
 
-      {/* ══ LISTE DES DEVIS ══════════════════════════════ */}
+      {/* ══ LISTE DEVIS ══ */}
       {tab === "devis" && (
         <div className="space-y-3">
           {quotes.length === 0 ? (
@@ -629,13 +756,19 @@ export default function Dashboard() {
             </div>
           ) : (
             quotes.map((q) => (
-              <QuoteCard key={q.id} quote={q} onConvert={handleConvert} />
+              <QuoteCard
+                key={q.id}
+                quote={q}
+                onConvert={handleConvert}
+                onEdit={handleEditQuote}
+                onDelete={handleDeleteQuote}
+              />
             ))
           )}
         </div>
       )}
 
-      {/* ── Boutons de création rapide (fixes sur mobile) ── */}
+      {/* ── Boutons création rapide ── */}
       <div
         className="fixed bottom-24 right-4 flex flex-col gap-2
                       md:static md:flex-row md:justify-end
@@ -652,7 +785,6 @@ export default function Dashboard() {
           <span className="hidden md:inline">Nouvelle facture</span>
           <span className="md:hidden">+ Facture</span>
         </button>
-
         <button
           onClick={() => navigate("/devis/new")}
           className="flex items-center gap-2 px-4 py-3 rounded-xl
@@ -663,6 +795,17 @@ export default function Dashboard() {
           <ClipboardList size={16} />
           <span className="hidden md:inline">Nouveau devis</span>
           <span className="md:hidden">+ Devis</span>
+        </button>
+        <button
+          onClick={() => navigate("/clients")}
+          className="flex items-center gap-2 px-4 py-3 rounded-xl
+                     bg-gray-700 hover:bg-gray-800 text-white
+                     font-semibold text-sm shadow-lg
+                     transition-colors"
+        >
+          <Building2 size={16} />
+          <span className="hidden md:inline">Clients</span>
+          <span className="md:hidden">Clients</span>
         </button>
       </div>
     </div>
